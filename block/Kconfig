@@ -135,6 +135,6 @@ endif # BLOCK
 config BLOCK_COMPAT
 	bool
 	depends on BLOCK && COMPAT
-	default n
+	default y
 
 source block/Kconfig.iosched
