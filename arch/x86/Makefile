@@ -104,7 +104,7 @@ else
 	KBUILD_CFLAGS += $(call cc-option,-mskip-rax-setup)
 
         # FIXME - should be integrated in Makefile.cpu (Makefile_32.cpu)
-        cflags-$(CONFIG_MNATIVE) += $(call cc-option,-march=native)
+        cflags-$(CONFIG_MNATIVE) += $(call cc-option,-march=native,-mtune=native)
         cflags-$(CONFIG_MK8) += $(call cc-option,-march=k8)
         cflags-$(CONFIG_MK8SSE3) += $(call cc-option,-march=k8-sse3,-mtune=k8)
         cflags-$(CONFIG_MK10) += $(call cc-option,-march=amdfam10)
