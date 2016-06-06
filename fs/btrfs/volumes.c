@@ -2190,7 +2190,7 @@ static int btrfs_prepare_sprout(struct btrfs_root *root)
 }
 
 /*
- * strore the expected generation for seed devices in device items.
+ * Store the expected generation for seed devices in device items.
  */
 static int btrfs_finish_sprout(struct btrfs_trans_handle *trans,
 			       struct btrfs_root *root)
@@ -2761,6 +2761,7 @@ int btrfs_remove_chunk(struct btrfs_trans_handle *trans,
 	u64 dev_extent_len = 0;
 	u64 chunk_objectid = BTRFS_FIRST_CHUNK_TREE_OBJECTID;
 	int i, ret = 0;
+	struct btrfs_fs_devices *fs_devices = root->fs_info->fs_devices;
 
 	/* Just in case */
 	root = root->fs_info->chunk_root;
@@ -2787,12 +2788,19 @@ int btrfs_remove_chunk(struct btrfs_trans_handle *trans,
 	check_system_chunk(trans, extent_root, map->type);
 	unlock_chunks(root->fs_info->chunk_root);
 
+	/*
+	 * Take the device list mutex to prevent races with the final phase of
+	 * a device replace operation that replaces the device object associated
+	 * with map stripes (dev-replace.c:btrfs_dev_replace_finishing()).
+	 */
+	mutex_lock(&fs_devices->device_list_mutex);
 	for (i = 0; i < map->num_stripes; i++) {
 		struct btrfs_device *device = map->stripes[i].dev;
 		ret = btrfs_free_dev_extent(trans, device,
 					    map->stripes[i].physical,
 					    &dev_extent_len);
 		if (ret) {
+			mutex_unlock(&fs_devices->device_list_mutex);
 			btrfs_abort_transaction(trans, root, ret);
 			goto out;
 		}
@@ -2811,11 +2819,14 @@ int btrfs_remove_chunk(struct btrfs_trans_handle *trans,
 		if (map->stripes[i].dev) {
 			ret = btrfs_update_device(trans, map->stripes[i].dev);
 			if (ret) {
+				mutex_unlock(&fs_devices->device_list_mutex);
 				btrfs_abort_transaction(trans, root, ret);
 				goto out;
 			}
 		}
 	}
+	mutex_unlock(&fs_devices->device_list_mutex);
+
 	ret = btrfs_free_chunk(trans, root, chunk_objectid, chunk_offset);
 	if (ret) {
 		btrfs_abort_transaction(trans, root, ret);
@@ -3387,7 +3398,7 @@ static int should_balance_chunk(struct btrfs_root *root,
 	} else if ((bargs->flags & BTRFS_BALANCE_ARGS_LIMIT_RANGE)) {
 		/*
 		 * Same logic as the 'limit' filter; the minimum cannot be
-		 * determined here because we do not have the global informatoin
+		 * determined here because we do not have the global information
 		 * about the count of all chunks that satisfy the filters.
 		 */
 		if (bargs->limit_max == 0)
@@ -5762,20 +5773,17 @@ static int __btrfs_map_block(struct btrfs_fs_info *fs_info, int rw,
 			}
 		}
 		if (found) {
-			if (physical_of_found + map->stripe_len <=
-			    dev_replace->cursor_left) {
-				struct btrfs_bio_stripe *tgtdev_stripe =
-					bbio->stripes + num_stripes;
+			struct btrfs_bio_stripe *tgtdev_stripe =
+				bbio->stripes + num_stripes;
 
-				tgtdev_stripe->physical = physical_of_found;
-				tgtdev_stripe->length =
-					bbio->stripes[index_srcdev].length;
-				tgtdev_stripe->dev = dev_replace->tgtdev;
-				bbio->tgtdev_map[index_srcdev] = num_stripes;
+			tgtdev_stripe->physical = physical_of_found;
+			tgtdev_stripe->length =
+				bbio->stripes[index_srcdev].length;
+			tgtdev_stripe->dev = dev_replace->tgtdev;
+			bbio->tgtdev_map[index_srcdev] = num_stripes;
 
-				tgtdev_indexes++;
-				num_stripes++;
-			}
+			tgtdev_indexes++;
+			num_stripes++;
 		}
 	}
 
@@ -6076,7 +6084,7 @@ static void bbio_error(struct btrfs_bio *bbio, struct bio *bio, u64 logical)
 {
 	atomic_inc(&bbio->error);
 	if (atomic_dec_and_test(&bbio->stripes_pending)) {
-		/* Shoud be the original bio. */
+		/* Should be the original bio. */
 		WARN_ON(bio != bbio->orig_bio);
 
 		btrfs_io_bio(bio)->mirror_num = bbio->mirror_num;
@@ -6560,7 +6568,7 @@ int btrfs_read_sys_array(struct btrfs_root *root)
 	set_extent_buffer_uptodate(sb);
 	btrfs_set_buffer_lockdep_class(root->root_key.objectid, sb, 0);
 	/*
-	 * The sb extent buffer is artifical and just used to read the system array.
+	 * The sb extent buffer is artificial and just used to read the system array.
 	 * set_extent_buffer_uptodate() call does not properly mark all it's
 	 * pages up-to-date when the page is larger: extent does not cover the
 	 * whole page and consequently check_page_uptodate does not find all
@@ -6630,13 +6638,13 @@ int btrfs_read_sys_array(struct btrfs_root *root)
 		sb_array_offset += len;
 		cur_offset += len;
 	}
-	free_extent_buffer(sb);
+	free_extent_buffer_stale(sb);
 	return ret;
 
 out_short_read:
 	printk(KERN_ERR "BTRFS: sys_array too short to read %u bytes at offset %u\n",
 			len, cur_offset);
-	free_extent_buffer(sb);
+	free_extent_buffer_stale(sb);
 	return -EIO;
 }
 
